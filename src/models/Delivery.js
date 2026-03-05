@@ -120,7 +120,6 @@ deliverySchema.pre('validate', async function(next) {
     const count = await mongoose.model('Delivery').countDocuments();
     this.numeroLivraison = `LIV${String(count + 1).padStart(6, '0')}`;
   }
-  next();
 });
 
 export default mongoose.model('Delivery', deliverySchema);

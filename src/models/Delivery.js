@@ -115,7 +115,7 @@ const deliverySchema = new mongoose.Schema({
 });
 
 // Générer un numéro de livraison automatique
-deliverySchema.pre('save', async function(next) {
+deliverySchema.pre('validate', async function(next) {
   if (!this.numeroLivraison) {
     const count = await mongoose.model('Delivery').countDocuments();
     this.numeroLivraison = `LIV${String(count + 1).padStart(6, '0')}`;

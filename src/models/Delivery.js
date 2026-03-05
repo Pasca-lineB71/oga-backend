@@ -46,25 +46,31 @@ const deliverySchema = new mongoose.Schema({
   instructions: {
     type: String,
   },
+  // ✅ typeVehicule : requis mais avec valeur par défaut 'moto' pour livraison ordinaire
   typeVehicule: {
     type: String,
     enum: ['moto', 'tricycle', 'voiture'],
     required: true,
+    default: 'moto',
   },
+  // ✅ fourgonnette ajoutée dans l'enum
   sousTypeVoiture: {
     type: String,
-    enum: ['berline', 'pickup', 'camionnette'],
+    enum: ['berline', 'pickup', 'camionnette', 'fourgonnette'],
   },
+  // ✅ distance non bloquante (0 si Google Maps indisponible)
   distance: {
-    type: Number, // en km
-    required: true,
+    type: Number,
+    default: 0,
   },
   dureeEstimee: {
     type: String,
+    default: 'N/A',
   },
   tarif: {
     type: Number,
     required: true,
+    default: 0,
   },
   fraisPlateforme: {
     type: Number,
@@ -73,6 +79,7 @@ const deliverySchema = new mongoose.Schema({
   montantTotal: {
     type: Number,
     required: true,
+    default: 500,
   },
   conditionsSpeciales: {
     type: Boolean,
@@ -85,7 +92,7 @@ const deliverySchema = new mongoose.Schema({
   },
   methodePaiement: {
     type: String,
-    enum: ['orange_money', 'moov_money', 'carte_bancaire', 'especes'],
+    enum: ['orange_money', 'moov_money', 'telecel_money', 'carte_bancaire', 'especes'],
     required: true,
   },
   statutPaiement: {
@@ -97,26 +104,12 @@ const deliverySchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
   },
-  dateAcceptation: {
-    type: Date,
-  },
-  dateDepart: {
-    type: Date,
-  },
-  dateLivraison: {
-    type: Date,
-  },
-  dateAnnulation: {
-    type: Date,
-  },
-  note: {
-    type: Number,
-    min: 1,
-    max: 5,
-  },
-  commentaire: {
-    type: String,
-  },
+  dateAcceptation: { type: Date },
+  dateDepart: { type: Date },
+  dateLivraison: { type: Date },
+  dateAnnulation: { type: Date },
+  note: { type: Number, min: 1, max: 5 },
+  commentaire: { type: String },
 }, {
   timestamps: true,
 });

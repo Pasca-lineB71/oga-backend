@@ -22,7 +22,6 @@ router.post('/calculate-price', async (req, res) => {
       });
     }
 
-    // Calculer la distance avec Google Maps
     const distanceResult = await calculateDistance(
       `${adresseDepart}, Ouagadougou, Burkina Faso`,
       `${adresseArrivee}, Ouagadougou, Burkina Faso`
@@ -78,77 +77,96 @@ router.post('/', authMiddleware, async (req, res) => {
       methodePaiement,
     } = req.body;
 
-    // Validation
-    if (!typeLivraison || !expediteur || !destinataire || !typeVehicule) {
+    // ✅ Validation : typeVehicule requis uniquement pour la course express
+    if (!typeLivraison || !expediteur || !destinataire) {
       return res.status(400).json({
         success: false,
-        message: 'Données manquantes',
+        message: 'Données manquantes : typeLivraison, expediteur et destinataire sont requis',
       });
     }
 
-    // Géocoder les adresses pour obtenir les coordonnées
-    const expediteurGeocode = await geocodeAddress(
-      `${expediteur.adresse}, Ouagadougou, Burkina Faso`
-    );
-    const destinataireGeocode = await geocodeAddress(
-      `${destinataire.adresse}, Ouagadougou, Burkina Faso`
-    );
-
-    // Calculer la distance
-    const distanceResult = await calculateDistance(
-      `${expediteur.adresse}, Ouagadougou, Burkina Faso`,
-      `${destinataire.adresse}, Ouagadougou, Burkina Faso`
-    );
-
-    if (!distanceResult.success) {
+    if (typeLivraison === 'pressing' && !typeVehicule) {
       return res.status(400).json({
         success: false,
-        message: 'Impossible de calculer la distance entre les adresses',
+        message: 'Le type de véhicule est requis pour une course express',
       });
     }
 
-    const distance = distanceResult.distance;
-    const tarif = calculateDeliveryPrice(distance, conditionsSpeciales);
+    // ✅ Tentative de géocodage — non bloquant si Google Maps indisponible
+    let expediteurCoordonnees;
+    let destinataireCoordonnees;
+    let distance = 0;
+    let dureeEstimee = 'N/A';
+    let tarif = 0;
+
+    try {
+      const expediteurGeocode = await geocodeAddress(
+        `${expediteur.adresse}, Ouagadougou, Burkina Faso`
+      );
+      const destinataireGeocode = await geocodeAddress(
+        `${destinataire.adresse}, Ouagadougou, Burkina Faso`
+      );
+
+      if (expediteurGeocode.success) {
+        expediteurCoordonnees = {
+          lat: expediteurGeocode.latitude,
+          lng: expediteurGeocode.longitude,
+        };
+      }
+      if (destinataireGeocode.success) {
+        destinataireCoordonnees = {
+          lat: destinataireGeocode.latitude,
+          lng: destinataireGeocode.longitude,
+        };
+      }
+
+      const distanceResult = await calculateDistance(
+        `${expediteur.adresse}, Ouagadougou, Burkina Faso`,
+        `${destinataire.adresse}, Ouagadougou, Burkina Faso`
+      );
+
+      if (distanceResult.success) {
+        distance = distanceResult.distance;
+        dureeEstimee = distanceResult.duration;
+        tarif = calculateDeliveryPrice(distance, conditionsSpeciales);
+      }
+    } catch (mapsError) {
+      // ✅ Google Maps indisponible — on continue sans distance
+      console.warn('⚠️ Google Maps indisponible, livraison créée sans distance:', mapsError.message);
+    }
+
     const fraisPlateforme = parseInt(process.env.PLATFORM_FEE_LIVRAISON) || 500;
-    const montantTotal = tarif + fraisPlateforme;
+    const urgenceFee = conditionsSpeciales ? 1000 : 0;
+    const montantTotal = tarif + fraisPlateforme + urgenceFee;
 
-    // Créer la livraison
+    // ✅ typeVehicule par défaut 'moto' pour livraison ordinaire (requis par le modèle)
+    const vehiculeFinal = typeVehicule || 'moto';
+
     const deliveryData = {
       client: req.user._id,
       typeLivraison,
       expediteur: {
         ...expediteur,
-        coordonnees: expediteurGeocode.success
-          ? {
-              lat: expediteurGeocode.latitude,
-              lng: expediteurGeocode.longitude,
-            }
-          : undefined,
+        ...(expediteurCoordonnees && { coordonnees: expediteurCoordonnees }),
       },
       destinataire: {
         ...destinataire,
-        coordonnees: destinataireGeocode.success
-          ? {
-              lat: destinataireGeocode.latitude,
-              lng: destinataireGeocode.longitude,
-            }
-          : undefined,
+        ...(destinataireCoordonnees && { coordonnees: destinataireCoordonnees }),
       },
-      typeVehicule,
-      sousTypeVoiture,
+      typeVehicule: vehiculeFinal,
+      sousTypeVoiture: sousTypeVoiture || undefined,
       distance,
-      dureeEstimee: distanceResult.duration,
+      dureeEstimee,
       tarif,
       fraisPlateforme,
       montantTotal,
-      conditionsSpeciales,
-      methodePaiement,
+      conditionsSpeciales: conditionsSpeciales || false,
+      methodePaiement: methodePaiement || 'orange_money',
       statut: 'en_attente',
       statutPaiement: 'payé',
       dateCommande: new Date(),
     };
 
-    // Ajouter colis ou instructions selon le type
     if (typeLivraison === 'ordinaire' && colis) {
       deliveryData.colis = colis;
     } else if (typeLivraison === 'pressing' && instructions) {
@@ -158,12 +176,12 @@ router.post('/', authMiddleware, async (req, res) => {
     const delivery = await Delivery.create(deliveryData);
 
     await createTransaction({
-       userId: req.user._id,
-       type: 'paiement_livraison',
-       montant: -montantTotal, // débit
-       description: `Livraison ${typeLivraison === 'pressing' ? 'express' : 'ordinaire'} — ${expediteur.adresse} → ${destinataire.adresse}`,
-       methodePaiement,
-       refDelivery: delivery._id,
+      userId: req.user._id,
+      type: 'paiement_livraison',
+      montant: -montantTotal,
+      description: `Livraison ${typeLivraison === 'pressing' ? 'express' : 'ordinaire'} — ${expediteur.adresse} → ${destinataire.adresse}`,
+      methodePaiement: methodePaiement || 'orange_money',
+      refDelivery: delivery._id,
     });
 
     res.status(201).json({
@@ -225,7 +243,6 @@ router.get('/:id', authMiddleware, async (req, res) => {
       });
     }
 
-    // Vérifier que l'utilisateur est le propriétaire
     if (delivery.client._id.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
       return res.status(403).json({
         success: false,
@@ -263,7 +280,6 @@ router.put('/:id/cancel', authMiddleware, async (req, res) => {
       });
     }
 
-    // Vérifier que l'utilisateur est le propriétaire
     if (delivery.client.toString() !== req.user._id.toString()) {
       return res.status(403).json({
         success: false,
@@ -272,38 +288,27 @@ router.put('/:id/cancel', authMiddleware, async (req, res) => {
     }
 
     if (delivery.statut === 'annulé') {
-      return res.status(400).json({
-        success: false,
-        message: 'Cette livraison est déjà annulée',
-      });
+      return res.status(400).json({ success: false, message: 'Cette livraison est déjà annulée' });
     }
-
     if (delivery.statut === 'livré') {
-      return res.status(400).json({
-        success: false,
-        message: 'Impossible d\'annuler une livraison déjà effectuée',
-      });
+      return res.status(400).json({ success: false, message: 'Impossible d\'annuler une livraison déjà effectuée' });
     }
-
     if (delivery.statut === 'en_cours') {
-      return res.status(400).json({
-        success: false,
-        message: 'Impossible d\'annuler une livraison en cours',
-      });
+      return res.status(400).json({ success: false, message: 'Impossible d\'annuler une livraison en cours' });
     }
 
     delivery.statut = 'annulé';
     delivery.dateAnnulation = new Date();
     delivery.commentaire = req.body.raison || 'Annulation client';
     await delivery.save();
-    await createTransaction({
-       userId: req.user._id,
-       type: 'remboursement',
-       montant: delivery.montantTotal, // crédit
-       description: `Remboursement livraison ${delivery.numeroLivraison}`,
-       refDelivery: delivery._id,
-    });
 
+    await createTransaction({
+      userId: req.user._id,
+      type: 'remboursement',
+      montant: delivery.montantTotal,
+      description: `Remboursement livraison ${delivery.numeroLivraison}`,
+      refDelivery: delivery._id,
+    });
 
     res.json({
       success: true,
